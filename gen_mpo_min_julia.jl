@@ -1,6 +1,7 @@
 using LinearAlgebra
 using WignerSymbols
 using ITensors
+using ITensorMPOConstruction
 
 function calc_int_ps(nm, ps_pot :: Vector{Float64})
     ## N = 2s+1, get V[i,j,k,l]
@@ -82,7 +83,8 @@ function generate_hmt_fuzzy_ising_4(nm :: Int ;
         end
     end
     for m1 in 1 : nm
-        os += -2 * fld_h, "Sx", m1
+        os += -fld_h, "Cdagup", m1, "Cdn", m1
+        os += -fld_h, "Cdagdn", m1, "Cup", m1
     end
     return os
 end
@@ -91,12 +93,31 @@ nm = 24
 sites = [siteind("Electron", lz = m, conserve_sz = false, conserve_nf = true, conserve_lz = true, conserve_spin_parity = false) for m :: Int in 1 : nm]
 
 os = generate_hmt_fuzzy_ising_4(nm)
-t0 = time()
-hmt = MPO(os, sites ; cutoff = 1E-13)
-t1 = time() - t0
-@show t1
-t0 = time()
-hmt1 = MPO(os, sites ; cutoff = 1E-13)
-t1 = time() - t0
-@show t1
+
+operatorNames = [
+    "I",
+    "Cdn",
+    "Cup",
+    "Cdagdn",
+    "Cdagup",
+    "Ndn",
+    "Nup",
+    "Cup * Cdn",
+    "Cup * Cdagdn",
+    "Cup * Ndn",
+    "Cdagup * Cdn",
+    "Cdagup * Cdagdn",
+    "Cdagup * Ndn",
+    "Nup * Cdn",
+    "Nup * Cdagdn",
+    "Nup * Ndn",
+]
+
+opCacheVec = [
+    [OpInfo(ITensors.Op(name, n), sites[n]) for name in operatorNames] for
+    n in eachindex(sites)
+]
+
+@time hmt = MPO_new(os, sites; basisOpCacheVec=opCacheVec, tol=1e-8)
+
 @show maxlinkdim(hmt)
