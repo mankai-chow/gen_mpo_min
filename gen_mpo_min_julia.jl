@@ -3,6 +3,27 @@ using WignerSymbols
 using ITensors
 using ITensorMPOConstruction
 
+
+↓ = false
+↑ = true
+
+function create_op_cache_vec(sites::Vector{<:Index})::OpCacheVec
+    ## The identity must be the first operator.
+    ## The next six operators are the only ones that are used directly in MPO construction.
+    operatorNames = ["I", "Cdn", "Cup", "Cdagdn", "Cdagup", "Ndn", "Nup",
+                     "Cup * Cdn", "Cup * Cdagdn", "Cup * Ndn",
+                     "Cdagup * Cdn", "Cdagup * Cdagdn", "Cdagup * Ndn",
+                     "Nup * Cdn", "Nup * Cdagdn", "Nup * Ndn"]
+  
+    return [[OpInfo(ITensors.Op(name, n), sites[n]) for name in operatorNames] for n in eachindex(sites)]
+end
+
+opC(j::CartesianIndex, spin::Bool, mapping::Array{Int}) = OpID(2 + spin, mapping[wrap_around(size(mapping), j)])
+opC(j::Int, spin::Bool) = OpID(2 + spin, j)
+
+opCdag(j::CartesianIndex, spin::Bool, mapping::Array{Int}) = OpID(4 + spin, mapping[wrap_around(size(mapping), j)])
+opCdag(j::Int, spin::Bool) = OpID(4 + spin, j)
+
 function calc_int_ps(nm, ps_pot :: Vector{Float64})
     ## N = 2s+1, get V[i,j,k,l]
     int_el = zeros(nm, nm, nm)
@@ -68,8 +89,8 @@ end
 
 function generate_hmt_fuzzy_ising_4(nm :: Int ; 
     ps_pot_u = [4.75, 1.0], fld_h = 3.16)
-    os = OpSum()
-    int_el = calc_int_ps(nm, ps_pot_u)
+    os = OpIDSum{Float64}()
+    @time "calc_int_ps" int_el = calc_int_ps(nm, ps_pot_u)
     for m1 in 1 : nm
         for m2 in 1 : nm
             for m3 in 1 : nm
@@ -78,46 +99,29 @@ function generate_hmt_fuzzy_ising_4(nm :: Int ;
                     continue 
                 end
                 V = int_el[m1, m2, m3]
-                os += V * 2, "Cdagup", m1, "Cup", m4, "Cdagdn", m2, "Cdn", m3
+
+                push!(os, V * 2, opCdag(m1, ↑), opC(m4, ↑), opCdag(m2, ↓), opC(m3, ↓))
             end
         end
     end
     for m1 in 1 : nm
-        os += -fld_h, "Cdagup", m1, "Cdn", m1
-        os += -fld_h, "Cdagdn", m1, "Cup", m1
+        push!(os, -fld_h, opCdag(m1, ↑), opC(m1, ↓))
+        push!(os, -fld_h, opCdag(m1, ↓), opC(m1, ↓))
     end
     return os
 end
 
 nm = 24
 sites = [siteind("Electron", lz = m, conserve_sz = false, conserve_nf = true, conserve_lz = true, conserve_spin_parity = false) for m :: Int in 1 : nm]
-
+opCacheVec = create_op_cache_vec(sites)
 os = generate_hmt_fuzzy_ising_4(nm)
+hmt = MPO_new(os, sites, opCacheVec; basisOpCacheVec=opCacheVec, tol=4e-8)
 
-operatorNames = [
-    "I",
-    "Cdn",
-    "Cup",
-    "Cdagdn",
-    "Cdagup",
-    "Ndn",
-    "Nup",
-    "Cup * Cdn",
-    "Cup * Cdagdn",
-    "Cup * Ndn",
-    "Cdagup * Cdn",
-    "Cdagup * Cdagdn",
-    "Cdagup * Ndn",
-    "Nup * Cdn",
-    "Nup * Cdagdn",
-    "Nup * Ndn",
-]
-
-opCacheVec = [
-    [OpInfo(ITensors.Op(name, n), sites[n]) for name in operatorNames] for
-    n in eachindex(sites)
-]
-
-@time hmt = MPO_new(os, sites; basisOpCacheVec=opCacheVec, tol=1e-8)
+nm = 100
+sites = [siteind("Electron", lz = m, conserve_sz = false, conserve_nf = true, conserve_lz = true, conserve_spin_parity = false) for m :: Int in 1 : nm]
+opCacheVec = create_op_cache_vec(sites)
+println("nm = $nm")
+@time "Constructing opsum" os = generate_hmt_fuzzy_ising_4(nm)
+@time "constructing MPO" hmt = MPO_new(os, sites, opCacheVec; basisOpCacheVec=opCacheVec, tol=4e-8)
 
 @show maxlinkdim(hmt)
